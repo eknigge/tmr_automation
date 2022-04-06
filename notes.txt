@@ -1,0 +1,41 @@
+all data goes into a single reference sheets, and there is a report sheet
+filter all dates by month of interest, do not want days from other months
+add in outlier days, these will be exempted from calculations
+
+Transmittal
+    summed for each day to get daily totals by type
+    combine all transmittal reports to get the summary information
+
+Unsent Reconciliation report
+    similar process as transmittal report
+    Monitor 
+        type 505s
+        type 500s
+
+Trip Code
+    check that trip code totals are not blank
+    check that the hourly totals are also not very low
+    generate support files
+
+Trx By Hour
+    similar statistical testing as trip code
+    generate support files if requested, otherwise only generate when there are errors
+
+Txn Protocal
+    Daily summary by different tags types
+    used for monthly summary
+
+Daily Toll Rates
+    summary of daily revenue by direction
+    Highest Toll Rates 
+        highest NB and SB rate
+
+PVP
+    check trip building percentage
+    OCR confidence from OCR report, trips with confidence of 90% of higher
+       use column H in the report
+       need to remove elements where there is no Trip ID 
+    Tag penetration
+        monitor for outages
+        similar to by hour, need to check when there are outages
+        detailed transportation report to get this information
