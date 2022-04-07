@@ -5,4 +5,5 @@ TrxnDetail*
 *xlsx
 __pycache__/
 temp*
+*.log
 TollData.py
