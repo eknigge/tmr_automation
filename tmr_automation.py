@@ -9,9 +9,12 @@ TRANSMITTAL_HEADERS = [('', 3), ('TOTAL', 8), ('TYPE1', 8), ('TYPE2', 8), ('TYPE
                        ('TYPE92', 8), ('TYPE90', 8), ('TYPE95', 8), ('TYPE98', 8)]
 TRANSMITTAL_TABLE_TRX_TYPE = ['TYPE1_Total.1', 'TYPE2_Total.2', 'TYPE98_Total.9',
                               'TYPE95_Total.8', 'TYPE90_Total.7', 'TYPE99_Total.4']
+TRANSMITTAL_TABLE_CHECKS = [TRANSMITTAL_TABLE_TRX_TYPE[0], TRANSMITTAL_TABLE_TRX_TYPE[1],
+                            TRANSMITTAL_TABLE_TRX_TYPE[4]]
 TRANSMITTAL_FILE_IDENTIFIER = 'Transmittal'
 TRANSMITTAL_HEADER_ROW = 6
 TRIP_FILE_IDENTIFIER = 'TripTxnDetail'
+TRIP_ZERO_THRESHOLD_HOURS = 2
 DIRECTIONS = ['NB', 'SB', 'EB', 'WB']
 PASS_TRANSACTION_TYPES = ['HOV', 'AVI']
 TRANSACTION_FILE_IDENTIFIER = 'TrxnDetail'
@@ -19,13 +22,7 @@ TOLLING_START_HOUR = 5
 TOLLING_END_HOUR = 19
 OCR_THRESHOLD = 90
 OCR_FILE_IDENTIFIER = 'OCR'
-
-"""
-TODO
-    Add in error checking to trip summary, weekend, weekday, and add exemption dates
-    Error checking by hour and by daily count
-    Ability to change tolling hour start and end based on facility
-"""
+OUTPUT_REPORTS = {}
 
 
 def expand_transmittal_headers() -> list:
@@ -92,9 +89,65 @@ def process_transmittal_files():
         logging.debug(f'Processing transaction type: {i}')
         table = df_transmittal.pivot_table(values=i, index='DATE', aggfunc=np.count_nonzero)
         transmittal_tables.append(table)
-    tables = pd.concat(transmittal_tables, axis=1)
+    transmittal_summary_table = pd.concat(transmittal_tables, axis=1)
+    OUTPUT_REPORTS.update({'transmittal_summary': transmittal_summary_table})
+
+    # Run transmittal table checks
+    find_zeros_dataframe(transmittal_summary_table, TRANSMITTAL_TABLE_CHECKS)
 
     logging.info('End processing all transmittal files')
+
+
+def find_single_zero_list(values: list) -> list:
+    """
+    Find and return index where a value of 0 is found
+    :param values: list of integer or float values
+    :return: list
+    """
+    out = []
+    for i in range(len(values)):
+        if values[i] == 0 or values[i] == 0.0:
+            out.append(i)
+    return out
+
+
+def found_multiple_zeros(values: list) -> bool:
+    """
+    Determine whether there are multiple zeros in a list, utilizes the global
+    TRIP_ZERO_THRESHOLD_HOURS variable to set allowed number of consecutive zeros
+    :param values: list of values
+    :return: bool
+    """
+    out = False
+    n = TRIP_ZERO_THRESHOLD_HOURS
+    for i in range(len(values)):
+        consecutive_zeros = []
+        for j in range(1, n + 1):
+            if values[i - j] == 0 or values[i - j] == 0.0:
+                consecutive_zeros.append(1)
+        if sum(consecutive_zeros) == TRIP_ZERO_THRESHOLD_HOURS:
+            return True
+
+
+def find_zeros_dataframe(df: pd.DataFrame, columns: list, number_zeros=1):
+    logging.info('Checking for zeros in columns')
+    multiple_zeros = False
+    index_values = []
+
+    for column in columns:
+        if number_zeros == 1:
+            index_values = find_single_zero_list(df[column].tolist())
+        else:
+            multiple_zeros = found_multiple_zeros(df[column].tolist())
+
+        # For multi-zero search
+        if multiple_zeros:
+            logging.error(f'Multiple zero values found for {column}')
+        # For single search search
+        if len(index_values) > 0:
+            for value in index_values:
+                logging.error(f'Zeros found for {column}'
+                              f' and on date {df[column].iloc[value]}')
 
 
 def process_trip_file(filename: str) -> pd.DataFrame:
@@ -128,31 +181,33 @@ def create_trip_summary_tables(dataframe: pd.DataFrame):
     # Trip counts by hour, day, and trip ID
     trip_table_day_hour = df_trips.pivot_table(values='Trip ID', index=['DATE', 'HOUR'],
                                                columns='TripDefID', aggfunc=np.count_nonzero)
+    OUTPUT_REPORTS.update({'trip_table_hour': trip_table_day_hour})
     logging.debug('Table for trip ID by day and hour created')
 
     # Trip count by day and trip ID
     trip_table_day = df_trips.pivot_table(values='Trip ID', index='DATE',
                                           columns='TripDefID', aggfunc=np.count_nonzero)
+    OUTPUT_REPORTS.update({'trip_table_day': trip_table_day})
     logging.debug('Table for trip ID by day created')
 
     # Daily revenue
     trip_table_revenue = df_trips.pivot_table(values='Fare', index='DATE', columns='DIRECTION',
                                               aggfunc=np.sum)
+    OUTPUT_REPORTS.update({'daily_revenue': trip_table_revenue})
     logging.debug('Table for daily revenue created')
 
     # Highest fare
     trip_table_highest_fare = df_trips.pivot_table(values='Fare', index='DATE', columns='DIRECTION',
                                                    aggfunc=np.max)
+    OUTPUT_REPORTS.update({'highest_fare': trip_table_highest_fare})
     logging.debug('Table for highest fare created')
 
     # Agency Summary
     trip_table_agency = df_trips.pivot_table(values='Trip ID', index='DATE', columns='AG',
                                              aggfunc=np.count_nonzero)
+    OUTPUT_REPORTS.update({'agency_summary': trip_table_agency})
     logging.debug('Table for agency summary created')
 
-    # Trip count by day
-    trip_table_day = df_trips.pivot_table(values='Trip ID', index='DATE', aggfunc=np.count_nonzero)
-    logging.debug('Table for trip count by day created')
     logging.info('End create table summaries')
 
 
@@ -257,6 +312,7 @@ def process_transaction_files():
     logging.info('Start processing all transaction files')
     transaction_files = [i for i in os.listdir(os.getcwd()) if TRANSACTION_FILE_IDENTIFIER in i]
     df_transaction = pd.concat([process_transaction_file(i) for i in transaction_files])
+    df_transaction['DIRECTION'] = df_transaction['CSC Lane'].apply(get_cardinal_direction)
 
     # Add datetime information
     logging.debug('Add datetime information to transaction file dataframe')
@@ -267,8 +323,11 @@ def process_transaction_files():
     logging.info('Calculate transaction file metrics')
 
     # Tag penetration statistics
-    transaction_table_payment = df_transaction.pivot_table(values='Trx Typ', index='HOUR',
-                                                           columns='DATE', aggfunc=get_pass_percentage)
+    transaction_table_penetration = df_transaction.pivot_table(values='Trx Typ', index='HOUR',
+                                                               columns=['DATE', 'DIRECTION'],
+                                                               aggfunc=get_pass_percentage)
+    OUTPUT_REPORTS.update({'tag_penetration': transaction_table_penetration})
+
     # Calculate transactions to trips metric
     transactions_to_trip_count(df_transaction)
 
@@ -306,6 +365,7 @@ def transactions_to_trip_count(dataframe: pd.DataFrame):
     transaction_table_trip_building = df_transaction_tolling_hour.pivot_table(values='Trip ID',
                                                                               index='DATE',
                                                                               aggfunc=trip_id_percentage)
+    OUTPUT_REPORTS.update({'trip_building_metric': transaction_table_trip_building})
 
 
 def get_ocr_confidence(filename: str) -> dict:
@@ -349,8 +409,19 @@ def configure_logging():
                         level=logging.DEBUG)
 
 
+def export_summary_tables():
+    """
+    Export all output reports
+    """
+    logging.info('Start report Export')
+    with pd.ExcelWriter('reports_combined.xlsx') as writer:
+        for key in OUTPUT_REPORTS:
+            OUTPUT_REPORTS[key].to_excel(writer, sheet_name=key)
+    logging.info('End report Export')
+
+
 def main():
-    stars = '****************************'
+    stars = 40 * '*'
     print(f'{stars}\nEnable Logging\n{stars}')
     configure_logging()
     print(f'{stars}\nProcess Transmittal Files\n{stars}')
@@ -361,6 +432,8 @@ def main():
     process_transaction_files()
     print(f'{stars}\nProcess OCR files\n{stars}')
     process_ocr_files()
+    print(f'{stars}\nExport Summary Tables\n{stars}')
+    export_summary_tables()
 
 
 if __name__ == '__main__':
