@@ -106,7 +106,7 @@ def find_single_zero_list(values: list) -> list:
     """
     out = []
     for i in range(len(values)):
-        if values[i] == 0 or values[i] == 0.0:
+        if values[i] == 0 or values[i] == 0.0 or np.isnan(values[i]):
             out.append(i)
     return out
 
@@ -123,7 +123,7 @@ def found_multiple_zeros(values: list) -> bool:
     for i in range(len(values)):
         consecutive_zeros = []
         for j in range(1, n + 1):
-            if values[i - j] == 0 or values[i - j] == 0.0:
+            if values[i - j] == 0 or values[i - j] == 0.0 or np.isnan(values[i - j]):
                 consecutive_zeros.append(1)
         if sum(consecutive_zeros) == TRIP_ZERO_THRESHOLD_HOURS:
             return True
@@ -181,6 +181,7 @@ def create_trip_summary_tables(dataframe: pd.DataFrame):
     # Trip counts by hour, day, and trip ID
     trip_table_day_hour = df_trips.pivot_table(values='Trip ID', index=['DATE', 'HOUR'],
                                                columns='TripDefID', aggfunc=np.count_nonzero)
+    find_zeros_dataframe(trip_table_day_hour, trip_table_day_hour.columns, TRIP_ZERO_THRESHOLD_HOURS)
     OUTPUT_REPORTS.update({'trip_table_hour': trip_table_day_hour})
     logging.debug('Table for trip ID by day and hour created')
 
@@ -376,6 +377,8 @@ def get_ocr_confidence(filename: str) -> dict:
     """
     df = pd.read_csv(filename, skiprows=4)
     df = df[df['CSC'] == 'Y']
+    if df.shape[0] == 0:
+        return {}
     direction = get_cardinal_direction(df['Lane'].iloc[0])
     date = pd.to_datetime(df['Trx DateTime'].iloc[0])
     file_date = f'{direction}-{date.year}-{date.month}-{date.day}'
@@ -396,6 +399,7 @@ def process_ocr_files():
         logging.debug(f'Adding OCR results from {file}')
         df_ocr_confidence.update(get_ocr_confidence(file))
     df = pd.Series(df_ocr_confidence)
+    OUTPUT_REPORTS.update({'ocr_audit': df})
 
     logging.info('End Processing all OCR files')
 
