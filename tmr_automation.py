@@ -175,6 +175,10 @@ def get_cardinal_direction(value: str) -> str:
 
 
 def create_trip_summary_tables(dataframe: pd.DataFrame):
+    """
+    Wrapper function to create the trip summary tables
+    :param dataframe: Pandas DataFrame
+    """
     logging.info('Begin create table summaries')
     df_trips = dataframe
 
@@ -307,8 +311,8 @@ def trip_id_percentage(values: list) -> float:
 def process_transaction_files():
     """
     Process transactions files. This function is used for determining tag penetration
-    statistics since the transaction file contains day 24/7, and for counting the number of
-    transaction that become trips.
+    statistics since the transaction file contains day 24/7, counting the number of
+    transaction that become trips, and for axle statistics.
     """
     logging.info('Start processing all transaction files')
     transaction_files = [i for i in os.listdir(os.getcwd()) if TRANSACTION_FILE_IDENTIFIER in i]
@@ -329,10 +333,65 @@ def process_transaction_files():
                                                                aggfunc=get_pass_percentage)
     OUTPUT_REPORTS.update({'tag_penetration': transaction_table_penetration})
 
+    # Generate axle report and total tables
+    table_names = ['IMG', 'AVI']
+    transaction_table_axle = create_axle_total_tables(df_transaction, table_names)
+
+    # Rename columns
+    column_names = list(transaction_table_axle.columns)
+    n = len(column_names)
+    for i in range(n - len(table_names), n):
+        column_names[i] = table_names.pop(0)
+    transaction_table_axle.columns = column_names
+
+    transaction_table_axle.to_csv('temp.csv')
+    OUTPUT_REPORTS.update({'axle_report': transaction_table_axle})
+
     # Calculate transactions to trips metric
     transactions_to_trip_count(df_transaction)
 
     logging.info('End processing all transaction files')
+
+
+def create_axle_total_tables(df_transaction: pd.DataFrame, table_names) -> pd.DataFrame:
+    """
+    Create axle tables and return combined dataframe
+    :param df_transaction: Pandas DataFrame
+    :param table_names: list of str values
+    :return: Pandas DataFrame
+    """
+    axle_report_tables = []
+    df_transaction['AXLE'] = df_transaction['Fwd'].apply(axle_count_validation)
+    df_transaction['TYPE'] = df_transaction['Trx Typ'].apply(transaction_type_axle_report)
+    transaction_table_axle = df_transaction.pivot_table(values='Trx ID', index=['DATE', 'HOUR'],
+                                                        columns=['DIRECTION', 'TYPE', 'AXLE'],
+                                                        aggfunc=np.count_nonzero)
+
+    # Create total tables
+    df_transaction_img = df_transaction[df_transaction['TYPE'] == 'IMG']
+    transaction_table_img = df_transaction_img.pivot_table(values='Trx ID', index=['DATE', 'HOUR'],
+                                                           aggfunc=np.count_nonzero)
+    axle_report_tables.append(transaction_table_img)
+
+    df_transaction_avi = df_transaction[df_transaction['TYPE'] == 'AVI']
+    transaction_table_avi = df_transaction_avi.pivot_table(values='Trx ID', index=['DATE', 'HOUR'],
+                                                           aggfunc=np.count_nonzero)
+    axle_report_tables.append(transaction_table_avi)
+
+    directions = df_transaction['DIRECTION'].drop_duplicates().tolist()
+    for direction in directions:
+        table_names.append(direction)
+        df_transaction_dir = df_transaction[df_transaction['DIRECTION'] == direction]
+        transaction_table_direction = df_transaction_dir.pivot_table(values='Trx ID',
+                                                                     index=['DATE', 'HOUR'],
+                                                                     aggfunc=np.count_nonzero)
+        axle_report_tables.append(transaction_table_direction)
+
+    # Combine all tables
+    for report in axle_report_tables:
+        transaction_table_axle = pd.concat([transaction_table_axle, report], axis='columns')
+
+    return transaction_table_axle
 
 
 def transactions_to_trip_count(dataframe: pd.DataFrame):
@@ -424,6 +483,48 @@ def export_summary_tables():
     logging.info('End report Export')
 
 
+def axle_count_validation(value):
+    """
+    Function to limit the axle count values from 2 (min) to 6 (max)
+    :param value: numerical
+    :return: int, range 2-6
+    """
+    if value < 2:
+        return 2
+    elif value > 6:
+        return 6
+    else:
+        return value
+
+
+def transaction_type_axle_report(value: str) -> str:
+    """
+    Function to set transactions to either IMG or AVI
+    :param value: string, transaction type
+    :return: string, IMG or AVI
+    """
+    if 'IMG' in value:
+        return value
+    else:
+        return 'AVI'
+
+
+def export_error_log():
+    """
+    Read script log and create separate error log file.
+    """
+    output = []
+    with open('tmr_automation.log', 'r') as f:
+        for line in f:
+            line_data = f.readline().strip()
+            if 'ERROR' in line_data:
+                output.append(line_data)
+
+    with open('tmr_errors.log', 'w') as f:
+        for line in output:
+            f.write(line + '\n')
+
+
 def main():
     stars = 40 * '*'
     print(f'{stars}\nEnable Logging\n{stars}')
@@ -438,6 +539,7 @@ def main():
     process_ocr_files()
     print(f'{stars}\nExport Summary Tables\n{stars}')
     export_summary_tables()
+    export_error_log()
 
 
 if __name__ == '__main__':
