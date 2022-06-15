@@ -7,13 +7,20 @@ import os
 TRANSMITTAL_HEADERS = [('', 3), ('TOTAL', 8), ('TYPE1', 8), ('TYPE2', 8), ('TYPE93', 8),
                        ('TYPE99', 8), ('TYPE94', 1), ('TYPE96', 1), ('TYPE97', 6),
                        ('TYPE92', 8), ('TYPE90', 8), ('TYPE95', 8), ('TYPE98', 8)]
-TRANSMITTAL_TABLE_TRX_TYPE = ['TYPE1_Total.1', 'TYPE2_Total.2', 'TYPE98_Total.9',
-                              'TYPE95_Total.8', 'TYPE90_Total.7', 'TYPE99_Total.4']
-TRANSMITTAL_TABLE_CHECKS = [TRANSMITTAL_TABLE_TRX_TYPE[0], TRANSMITTAL_TABLE_TRX_TYPE[1],
-                            TRANSMITTAL_TABLE_TRX_TYPE[4]]
+TRANSMITTAL_TABLE_TRX_TYPE = [('TYPE1_Accept.1', 'TYPE1_Prev Accept.1'),
+                              ('TYPE2_Accept.2', 'TYPE2_Prev Accept.2'),
+                              ('TYPE90_Accept.7', 'TYPE90_Prev Accept.7'),
+                              ('TYPE95_Accept.8', 'TYPE95_Prev Accept.8'),
+                              ('TYPE98_Accept.9', 'TYPE98_Prev Accept.9'),
+                              ('TYPE99_Accept.4', 'TYPE99_Prev Accept.4')]
+
+TRANSMITTAL_TABLE_HEADERS = ['TYPE1', 'TYPE2', 'TYPE90', 'TYPE95', 'TYPE98', 'TYPE99']
+TRANSMITTAL_TABLE_CHECKS = [TRANSMITTAL_TABLE_HEADERS[0], TRANSMITTAL_TABLE_HEADERS[1],
+                            TRANSMITTAL_TABLE_HEADERS[2]]
 TRANSMITTAL_FILE_IDENTIFIER = 'Transmittal'
 TRANSMITTAL_HEADER_ROW = 6
 TRIP_FILE_IDENTIFIER = 'TripTxnDetail'
+TRIP_FILE_FILTERS = [0, 71, 73, 96, 98]
 TRIP_ZERO_THRESHOLD_HOURS = 2
 DIRECTIONS = ['NB', 'SB', 'EB', 'WB']
 PASS_TRANSACTION_TYPES = ['HOV', 'AVI']
@@ -72,6 +79,18 @@ def process_transmittal_file(filename: str) -> pd.DataFrame:
     return df
 
 
+def get_transmittal_column_name(value: str) -> str:
+    """
+    Return transmittal column name without formatting
+    :param value: str
+    :return: transaction type in TRANSMITTAL_TABLE_HEADERS
+    """
+    for name in TRANSMITTAL_TABLE_HEADERS:
+        if name in value:
+            return name
+    return 'UNKNOWN'
+
+
 def process_transmittal_files():
     """
     Process transmittal files and summarize sent trips into an output table
@@ -85,10 +104,22 @@ def process_transmittal_files():
     logging.debug('Date time information added to dataframe')
 
     transmittal_tables = []
-    for i in TRANSMITTAL_TABLE_TRX_TYPE:
-        logging.debug(f'Processing transaction type: {i}')
-        table = df_transmittal.pivot_table(values=i, index='DATE', aggfunc=np.count_nonzero)
-        transmittal_tables.append(table)
+    for i in range(len(TRANSMITTAL_TABLE_TRX_TYPE)):
+        accept = TRANSMITTAL_TABLE_TRX_TYPE[i][0]
+        previous_accept = TRANSMITTAL_TABLE_TRX_TYPE[i][1]
+        logging.debug(f'Processing transaction type: {accept}, {previous_accept}')
+
+        # Convert to numeric
+        df_transmittal[accept] = df_transmittal[accept].apply(numeric_conversion)
+        df_transmittal[previous_accept] = df_transmittal[previous_accept].apply(numeric_conversion)
+
+        # Summarize and combine
+        table_accept = df_transmittal.pivot_table(values=accept, index='DATE', aggfunc=np.sum)
+        table_prev_accept = df_transmittal.pivot_table(values=previous_accept, index='DATE', aggfunc=np.sum)
+        table_out = table_accept[accept] + table_prev_accept[previous_accept]
+        table_out.name = get_transmittal_column_name(accept)
+
+        transmittal_tables.append(table_out)
     transmittal_summary_table = pd.concat(transmittal_tables, axis=1)
     OUTPUT_REPORTS.update({'transmittal_summary': transmittal_summary_table})
 
@@ -147,7 +178,7 @@ def find_zeros_dataframe(df: pd.DataFrame, columns: list, number_zeros=1):
         if len(index_values) > 0:
             for value in index_values:
                 logging.error(f'Zeros found for {column}'
-                              f' and on date {df[column].iloc[value]}')
+                              f' and on date {df.index.tolist()[value]}')
 
 
 def process_trip_file(filename: str) -> pd.DataFrame:
@@ -174,6 +205,15 @@ def get_cardinal_direction(value: str) -> str:
     return 'NA'
 
 
+def trip_filter_type_accept(value: str):
+    """
+    Return whether valid trip transaction type
+    :param value: string
+    :return: bool
+    """
+    return value in TRIP_FILE_FILTERS
+
+
 def create_trip_summary_tables(dataframe: pd.DataFrame):
     """
     Wrapper function to create the trip summary tables
@@ -181,6 +221,10 @@ def create_trip_summary_tables(dataframe: pd.DataFrame):
     """
     logging.info('Begin create table summaries')
     df_trips = dataframe
+
+    # Filter trips by valid transaction types
+    df_trips['REMOVE_BY_FILTER'] = df_trips['Filtertype'].apply(trip_filter_type_accept)
+    df_trips = df_trips[df_trips['REMOVE_BY_FILTER'] == True]
 
     # Trip counts by hour, day, and trip ID
     trip_table_day_hour = df_trips.pivot_table(values='Trip ID', index=['DATE', 'HOUR'],
@@ -523,6 +567,11 @@ def export_error_log():
     with open('tmr_errors.log', 'w') as f:
         for line in output:
             f.write(line + '\n')
+
+
+def numeric_conversion(value: str):
+    value = str(value).replace(',', '')
+    return int(value)
 
 
 def main():
