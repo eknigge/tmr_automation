@@ -497,14 +497,15 @@ def process_ocr_files():
     """
     logging.info('Start Processing all OCR files')
     ocr_files = [i for i in os.listdir(os.getcwd()) if OCR_FILE_IDENTIFIER in i]
-    df_ocr_confidence = {}
-    for file in ocr_files:
-        logging.debug(f'Adding OCR results from {file}')
-        df_ocr_confidence.update(get_ocr_confidence(file))
-    df = pd.Series(df_ocr_confidence)
-    OUTPUT_REPORTS.update({'ocr_audit': df})
+    if len(ocr_files) > 0:
+        df_ocr_confidence = {}
+        for file in ocr_files:
+            logging.debug(f'Adding OCR results from {file}')
+            df_ocr_confidence.update(get_ocr_confidence(file))
+        df = pd.Series(df_ocr_confidence)
+        OUTPUT_REPORTS.update({'ocr_audit': df})
 
-    logging.info('End Processing all OCR files')
+        logging.info('End Processing all OCR files')
 
 
 def configure_logging():
