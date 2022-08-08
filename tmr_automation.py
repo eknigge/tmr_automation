@@ -252,12 +252,19 @@ def create_trip_summary_tables(dataframe: pd.DataFrame):
     logging.debug('Table for highest fare created')
 
     # Agency Summary
-    trip_table_agency = df_trips.pivot_table(values='Trip ID', index='DATE', columns='AG',
+    df_agency = df_trips[df_trips['St'].apply(is_valid_or_moto_tag) == True]
+    trip_table_agency = df_agency.pivot_table(values='Trip ID', index='DATE', columns='AG',
                                              aggfunc=np.count_nonzero)
     OUTPUT_REPORTS.update({'agency_summary': trip_table_agency})
     logging.debug('Table for agency summary created')
+    df_agency = None
+    logging.debug('Table for agency summary, data removed')
 
     logging.info('End create table summaries')
+
+
+def is_valid_or_moto_tag(value: str) -> bool:
+    return 'v' in value.lower() or 'i' in value.lower()
 
 
 def process_trip_files():
