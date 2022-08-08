@@ -4,9 +4,9 @@ import numpy as np
 import pandas as pd
 import os
 
-TRANSMITTAL_HEADERS = [('', 3), ('TOTAL', 8), ('TYPE1', 8), ('TYPE2', 8), ('TYPE93', 8),
-                       ('TYPE99', 8), ('TYPE94', 1), ('TYPE96', 1), ('TYPE97', 6),
-                       ('TYPE92', 8), ('TYPE90', 8), ('TYPE95', 8), ('TYPE98', 8)]
+headers = [('', 3), ('TOTAL', 8), ('TYPE1', 8), ('TYPE2', 8), ('TYPE93', 8),
+           ('TYPE99', 8), ('TYPE94', 1), ('TYPE96', 1), ('TYPE97', 6),
+           ('TYPE92', 8), ('TYPE90', 8), ('TYPE95', 8), ('TYPE98', 8)]
 TRANSMITTAL_TABLE_TRX_TYPE = [('TYPE1_Accept.1', 'TYPE1_Prev Accept.1'),
                               ('TYPE2_Accept.2', 'TYPE2_Prev Accept.2'),
                               ('TYPE90_Accept.7', 'TYPE90_Prev Accept.7'),
@@ -32,15 +32,15 @@ OCR_FILE_IDENTIFIER = 'OCR'
 OUTPUT_REPORTS = {}
 
 
-def expand_transmittal_headers() -> list:
+def expand_transmittal_headers(headers: list, spacer='_') -> list:
     """
-    Expand header information, if blank, do not add spacer
-    :return: list of expanded headers, includes spacers
+    Expand header information ([header title], [quantity]), if blank, do not add spacer. E.g.
+    (HEADER1, 2) will become ['HEADER1', 'HEADER1'].
+    :return: list of expanded headers, including spacers
     """
     logging.info('Expand Transmittal Headers')
     out = []
-    spacer = '_'
-    for item in TRANSMITTAL_HEADERS:
+    for item in headers:
         for i in range(item[1]):
             if item[0] == '':
                 out.append(item[0])
@@ -71,10 +71,10 @@ def process_transmittal_file(filename: str) -> pd.DataFrame:
     :param filename: filename of transmittal file
     :return: Pandas DataFrame
     """
-    logging.info(f'Process transmitatl file:  {filename}')
+    logging.info(f'Process transmittal file:  {filename}')
     df = pd.read_csv(filename, skiprows=TRANSMITTAL_HEADER_ROW)
     df = df.dropna(subset=['Plaza'])
-    new_headers = combine_headers(expand_transmittal_headers(), df.columns)
+    new_headers = combine_headers(expand_transmittal_headers(headers), df.columns)
     df.columns = new_headers
     return df
 
