@@ -239,6 +239,11 @@ def create_trip_summary_tables(dataframe: pd.DataFrame):
     OUTPUT_REPORTS.update({'trip_table_day': trip_table_day})
     logging.debug('Table for trip ID by day created')
 
+    # Payment type by hour
+    trip_table_type = df_trips.pivot_table(values='Trip ID', index=['DATE', 'HOUR'],
+                                           columns='Pmnt Type', aggfunc=np.count_nonzero)
+    OUTPUT_REPORTS.update({'trip_pmnt_type': trip_table_type})
+
     # Daily revenue
     trip_table_revenue = df_trips.pivot_table(values='Fare', index='DATE', columns='DIRECTION',
                                               aggfunc=np.sum)
@@ -254,7 +259,7 @@ def create_trip_summary_tables(dataframe: pd.DataFrame):
     # Agency Summary
     df_agency = df_trips[df_trips['St'].apply(is_valid_or_moto_tag) == True]
     trip_table_agency = df_agency.pivot_table(values='Trip ID', index='DATE', columns='AG',
-                                             aggfunc=np.count_nonzero)
+                                              aggfunc=np.count_nonzero)
     OUTPUT_REPORTS.update({'agency_summary': trip_table_agency})
     logging.debug('Table for agency summary created')
     df_agency = None
@@ -264,7 +269,7 @@ def create_trip_summary_tables(dataframe: pd.DataFrame):
 
 
 def is_valid_or_moto_tag(value: str) -> bool:
-    return 'v' in value.lower() or 'i' in value.lower()
+    return 'v' in str(value).lower() or 'm' in str(value).lower()
 
 
 def process_trip_files():
@@ -586,15 +591,15 @@ def main():
     stars = 40 * '*'
     print(f'{stars}\nEnable Logging\n{stars}')
     configure_logging()
-    print(f'{stars}\nProcess Transmittal Files\n{stars}')
-    process_transmittal_files()
+    # print(f'{stars}\nProcess Transmittal Files\n{stars}')
+    # process_transmittal_files()
     print(f'{stars}\nProcess Trip Files\n{stars}')
     process_trip_files()
-    print(f'{stars}\nProcess Transaction files\n{stars}')
-    process_transaction_files()
-    print(f'{stars}\nProcess OCR files\n{stars}')
-    process_ocr_files()
-    print(f'{stars}\nExport Summary Tables\n{stars}')
+    # print(f'{stars}\nProcess Transaction files\n{stars}')
+    # process_transaction_files()
+    # print(f'{stars}\nProcess OCR files\n{stars}')
+    # process_ocr_files()
+    # print(f'{stars}\nExport Summary Tables\n{stars}')
     export_summary_tables()
     export_error_log()
 
