@@ -12,9 +12,13 @@ TRANSMITTAL_TABLE_TRX_TYPE = [('TYPE1_Accept.1', 'TYPE1_Prev Accept.1'),
                               ('TYPE90_Accept.7', 'TYPE90_Prev Accept.7'),
                               ('TYPE95_Accept.8', 'TYPE95_Prev Accept.8'),
                               ('TYPE98_Accept.9', 'TYPE98_Prev Accept.9'),
-                              ('TYPE99_Accept.4', 'TYPE99_Prev Accept.4')]
+                              ('TYPE99_Accept.4', 'TYPE99_Prev Accept.4'),
+                              ('TYPE97_Accept.5', 'TYPE97_Prev Accept.5'),
+                              ('TYPE96_Unsent', 0),
+                              ('TYPE92_Accept.6', 'TYPE92_Prev Accept.6')]
 
-TRANSMITTAL_TABLE_HEADERS = ['TYPE1', 'TYPE2', 'TYPE90', 'TYPE95', 'TYPE98', 'TYPE99']
+TRANSMITTAL_TABLE_HEADERS = ['TYPE1', 'TYPE2', 'TYPE90', 'TYPE95', 'TYPE98', 'TYPE99',
+                             'TYPE97', 'TYPE96', 'TYPE92']
 TRANSMITTAL_TABLE_CHECKS = [TRANSMITTAL_TABLE_HEADERS[0], TRANSMITTAL_TABLE_HEADERS[1],
                             TRANSMITTAL_TABLE_HEADERS[2]]
 TRANSMITTAL_FILE_IDENTIFIER = 'Transmittal'
@@ -30,6 +34,7 @@ TOLLING_END_HOUR = 19
 OCR_THRESHOLD = 90
 OCR_FILE_IDENTIFIER = 'OCR'
 OUTPUT_REPORTS = {}
+INVALID_TRXN_TYPES = ['BUF', 'UNK', 'SPU']
 
 
 def expand_transmittal_headers(headers: list, spacer='_') -> list:
@@ -98,6 +103,7 @@ def process_transmittal_files():
     logging.info('Start processing all transmittal files')
     transmittal_files = [i for i in os.listdir(os.getcwd()) if TRANSMITTAL_FILE_IDENTIFIER in i]
     df_transmittal = pd.concat([process_transmittal_file(i) for i in transmittal_files])
+    df_transmittal.to_csv('temp.csv')
     logging.debug('All transmittal files combined')
     df_transmittal['DATETIME'] = pd.to_datetime(df_transmittal['Trx Date'])
     df_transmittal['DATE'] = df_transmittal['DATETIME'].dt.date
@@ -111,7 +117,10 @@ def process_transmittal_files():
 
         # Convert to numeric
         df_transmittal[accept] = df_transmittal[accept].apply(numeric_conversion)
-        df_transmittal[previous_accept] = df_transmittal[previous_accept].apply(numeric_conversion)
+        try:
+            df_transmittal[previous_accept] = df_transmittal[previous_accept].apply(numeric_conversion)
+        except KeyError:
+            df_transmittal[previous_accept] = 0
 
         # Summarize and combine
         table_accept = df_transmittal.pivot_table(values=accept, index='DATE', aggfunc=np.sum)
@@ -345,23 +354,20 @@ def process_transaction_file(filename: str) -> pd.DataFrame:
     return df
 
 
-def trip_id_percentage(values: list) -> float:
-    """
-    Function to determine the percentage of values that have a valid trips ID.
-    Excludes values that are not an int or a float
-    :param values: list or list-like
-    :return: float, percentage of valid trips IDs
-    """
-    total_count = len(values)
-    trip_count = 0
+def validate_trip_input(value):
+    try:
+        new_value = int(value)
+        return 1
+    except ValueError:
+        return 0
 
-    for value in values:
-        if (isinstance(value, int) or isinstance(value, float)) and value > 0:
-            trip_count += 1
 
-    output = trip_count / total_count
-    logging.debug(f'Transactios to Trips Metric: {output}')
-    return output
+def is_invalid_transaction_type(value: str):
+    """
+    Determine whether input transaction is invalid for counting an 
+    data statistics
+    """
+    return str(value.upper()) in INVALID_TRXN_TYPES
 
 
 def process_transaction_files():
@@ -382,6 +388,10 @@ def process_transaction_files():
     df_transaction['HOUR'] = df_transaction['DATETIME'].dt.hour
 
     logging.info('Calculate transaction file metrics')
+
+    # remove invalid transaction types
+    df_transaction['IS_INVALID'] = df_transaction['Trx Typ'].apply(is_invalid_transaction_type)
+    df_transaction = df_transaction[df_transaction['IS_INVALID'] != True]
 
     # Tag penetration statistics
     transaction_table_penetration = df_transaction.pivot_table(values='Trx Typ', index='HOUR',
@@ -465,23 +475,25 @@ def transactions_to_trip_count(dataframe: pd.DataFrame):
                                                  (df_transaction['HOUR'] < TOLLING_END_HOUR)]
     logging.debug(f'Shape of dataframe after removal: {df_transaction_tolling_hour.shape}')
 
-    logging.debug(f'Open trip files and combine')
-    trip_files = [i for i in os.listdir(os.getcwd()) if TRIP_FILE_IDENTIFIER in i]
-    df_trip = pd.concat([td.TripFile(i).get_df() for i in trip_files])
+    count_dict = {}
+    n = df_transaction_tolling_hour.shape[0]
+    for i in range(n):
+        date = df_transaction_tolling_hour['DATE'].iloc[i]
+        is_valid_trip = validate_trip_input(df_transaction_tolling_hour['Trip'].iloc[i])
+        if date in count_dict:
+            count_dict[date][1] += is_valid_trip
+        else:
+            count_dict[date] = [n, 0]
 
-    # Convert transaction ID fields to numeric
-    logging.debug('Convert transaction ID fields to numeric')
-    df_trip['Trx ID'] = pd.to_numeric(df_trip['Trx ID'])
-    df_transaction_tolling_hour['Trx ID'] = pd.to_numeric(df_transaction_tolling_hour['Trx ID'])
+    for key in count_dict:
+        total = count_dict[key][0]
+        trips = count_dict[key][1]
+        count_dict[key].append(trips / total)
 
-    logging.debug('Merge transaction and trip dataframes')
-    df_transaction_tolling_hour = df_transaction_tolling_hour.merge(df_trip, on='Trx ID')
+    output = pd.DataFrame(count_dict).T
+    output.columns = ['Total_Transactions', 'Total_Trips', 'Percent_Built']
 
-    logging.debug('Output summary table of combined dataframe')
-    transaction_table_trip_building = df_transaction_tolling_hour.pivot_table(values='Trip ID',
-                                                                              index='DATE',
-                                                                              aggfunc=trip_id_percentage)
-    OUTPUT_REPORTS.update({'trip_building_metric': transaction_table_trip_building})
+    OUTPUT_REPORTS.update({'trip_building_metric': output})
 
 
 def get_ocr_confidence(filename: str) -> dict:
@@ -493,12 +505,13 @@ def get_ocr_confidence(filename: str) -> dict:
     df = pd.read_csv(filename, skiprows=4)
     df = df[df['CSC'] == 'Y']
     if df.shape[0] == 0:
-        return {}
+        return
     direction = get_cardinal_direction(df['Lane'].iloc[0])
     date = pd.to_datetime(df['Trx DateTime'].iloc[0])
-    file_date = f'{direction}-{date.year}-{date.month}-{date.day}'
+    file_date = f'{date.year}-{date.month}-{date.day}'
+    ocr_result = ocr_passing(df['OCR Cnfd'])
 
-    output = {file_date: ocr_passing(df['OCR Cnfd'])}
+    output = [file_date, direction, ocr_result]
     logging.debug(f'OCR Confidence Result: {output}')
     return output
 
@@ -510,12 +523,17 @@ def process_ocr_files():
     logging.info('Start Processing all OCR files')
     ocr_files = [i for i in os.listdir(os.getcwd()) if OCR_FILE_IDENTIFIER in i]
     if len(ocr_files) > 0:
-        df_ocr_confidence = {}
+        df_ocr_confidence = []
         for file in ocr_files:
             logging.debug(f'Adding OCR results from {file}')
-            df_ocr_confidence.update(get_ocr_confidence(file))
-        df = pd.Series(df_ocr_confidence)
-        OUTPUT_REPORTS.update({'ocr_audit': df})
+            ocr_result = get_ocr_confidence(file)
+            if ocr_result is not None:
+                df_ocr_confidence.append(ocr_result)
+        column_names = ['DATE', 'DIRECTION', 'METRIC']
+        df = pd.DataFrame(df_ocr_confidence, columns=column_names)
+        table = df.pivot_table(values='METRIC', index='DATE',
+                               columns='DIRECTION', aggfunc=np.sum)
+        OUTPUT_REPORTS.update({'ocr_audit': table})
 
         logging.info('End Processing all OCR files')
 
@@ -591,15 +609,15 @@ def main():
     stars = 40 * '*'
     print(f'{stars}\nEnable Logging\n{stars}')
     configure_logging()
-    # print(f'{stars}\nProcess Transmittal Files\n{stars}')
-    # process_transmittal_files()
+    print(f'{stars}\nProcess Transmittal Files\n{stars}')
+    process_transmittal_files()
     print(f'{stars}\nProcess Trip Files\n{stars}')
     process_trip_files()
-    # print(f'{stars}\nProcess Transaction files\n{stars}')
-    # process_transaction_files()
-    # print(f'{stars}\nProcess OCR files\n{stars}')
-    # process_ocr_files()
-    # print(f'{stars}\nExport Summary Tables\n{stars}')
+    print(f'{stars}\nProcess Transaction files\n{stars}')
+    process_transaction_files()
+    print(f'{stars}\nProcess OCR files\n{stars}')
+    process_ocr_files()
+    print(f'{stars}\nExport Summary Tables\n{stars}')
     export_summary_tables()
     export_error_log()
 
